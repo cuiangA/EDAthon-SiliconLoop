@@ -1,0 +1,18 @@
+# Nested git repos (vendored RTLScout tree: rtlscout + deps/spire-hdl + deps/tech_eval)
+# .git dirs renamed to .git_ so git treats the tree as plain files
+.git_/
+
+# Secrets — NEVER commit
+.env
+.env.*
+
+# Run outputs / artifacts
+runs/
+sim.out
+*.vcd
+obj_dir/
+.spire_cache/
+*.blif
+
+# Misc
+*.log

@@ -1,0 +1,76 @@
+# Standalone tools-only EDAthon/OpenROAD environment.
+# This Dockerfile intentionally does not COPY benchmark/demo/data files.
+# It can be built from this file alone, as long as the host has Internet access.
+FROM openroad/orfs:latest
+
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG BUILDPLATFORM
+ARG OPENCODE_VERSION=1.17.9
+
+LABEL org.opencontainers.image.title="EDAthon OpenROAD Tools Only" \
+      org.opencontainers.image.description="Standalone OpenROAD/Yosys/RTL simulation/lint/opencode environment without bundled benchmark data" \
+      org.opencontainers.image.version="2026-openroad-tools-only" \
+      org.edathon.target-platform="${TARGETPLATFORM}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV EDATHON_HOME=/opt/edathon
+ENV ORFS_HOME=/OpenROAD-flow-scripts
+ENV PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:/OpenROAD-flow-scripts/tools/install/yosys/bin:${PATH}
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Runtime tools only. No benchmark/demo data is bundled in this image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends -o Acquire::Retries=5 --fix-missing \
+      verilator \
+      berkeley-abc \
+      locales \
+      python3-pip \
+      autoconf gperf flex bison make g++ git ca-certificates curl \
+ && locale-gen en_US.UTF-8 \
+ && update-locale LANG=en_US.UTF-8 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Icarus Verilog 12.0. Ubuntu apt's iverilog 11.0 has known runtime/codegen issues.
+RUN set -eux; \
+    cd /tmp; \
+    git clone --depth 1 --branch v12_0 https://github.com/steveicarus/iverilog.git; \
+    cd iverilog; \
+    sh autoconf.sh; \
+    ./configure --prefix=/usr/local; \
+    make -j"$(nproc)"; \
+    make install; \
+    cd /; \
+    rm -rf /tmp/iverilog; \
+    iverilog -V | head -1
+
+# Python dependency used by the DRC connectivity checker if the evaluator is mounted later.
+RUN pip3 install --no-cache-dir shapely \
+ && python3 -c "import shapely; print('shapely', shapely.__version__)"
+
+# opencode CLI. API keys are not baked into the image; pass them at runtime if needed.
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64)  oc_arch="x64" ;; \
+      aarch64) oc_arch="arm64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /opt/opencode/bin; \
+    curl -fsSL -o /tmp/opencode.tar.gz \
+      "https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${oc_arch}.tar.gz"; \
+    tar xzf /tmp/opencode.tar.gz -C /opt/opencode/bin; \
+    chmod 755 /opt/opencode/bin/opencode; \
+    ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode; \
+    rm -f /tmp/opencode.tar.gz; \
+    mkdir -p /root/.config/opencode; \
+    printf '%s\n' \
+      '{' \
+      '  "$schema": "https://opencode.ai/config.json",' \
+      '  "model": "deepseek/deepseek-chat"' \
+      '}' > /root/.config/opencode/opencode.json; \
+    opencode --version
+
+WORKDIR /workspace
+CMD ["bash"]

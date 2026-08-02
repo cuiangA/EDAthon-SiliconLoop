@@ -1,0 +1,73 @@
+name: pytest (slim image)
+
+# Runs the test suite INSIDE the prebuilt slim EDA image (ghcr.io/huawei-csl/rtlscout:slim) — i.e. the
+# exact toolchain (Yosys 0.55, Verilator 5.040, OpenROAD, OpenSTA) rather than the distro apt builds the
+# stock `pytest.yml` workflow uses. This lets CI exercise the OpenROAD-backed metrics too.
+#
+# REQUIRES the image published to GHCR as a PUBLIC package `ghcr.io/huawei-csl/rtlscout:slim`
+# (see README, "Prebuilt image"). If that package is ever made private, the pull will fail — either
+# republish it public or add `permissions: packages: read` + `container.credentials` to this job.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  pytest-image:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/huawei-csl/rtlscout:slim    # must be a PUBLIC package, or add `credentials:`
+    steps:
+      - name: Checkout (with the spire-hdl submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install package + deps into the image's Python env
+        run: |
+          # The image's pyenv_eda is a `uv venv` (no pip); use `uv pip`, like post_create.sh does.
+          . /home/vscode/pyenv_eda/bin/activate
+          uv pip install -e deps/spire-hdl
+          uv pip install -e deps/tech_eval
+          uv pip install -r requirements.txt
+          uv pip install pytest
+
+      - name: Tool sanity (Yosys / Verilator / OpenROAD load)
+        run: |
+          . /home/vscode/pyenv_eda/bin/activate
+          yosys --version
+          verilator --version
+          /opt/tools/openroad/OpenROAD/bin/openroad -version
+
+      - name: pytest
+        run: |
+          . /home/vscode/pyenv_eda/bin/activate
+          pytest -q tests/
+
+      - name: PPA smoke (no LLM, no API key) — yosys + sky130 metrics
+        run: |
+          . /home/vscode/pyenv_eda/bin/activate
+          printf 'module adder(input [7:0] a, b, output [7:0] sum);\n  assign sum = a + b;\nendmodule\n' > /tmp/adder.sv
+          python run_eval.py /tmp/adder.sv --benchmark benchmarks/simple_adder --top-module adder --cost-metric transistors
+          python run_eval.py /tmp/adder.sv --benchmark benchmarks/simple_adder --top-module adder --cost-metric sky130_adp
+
+      - name: Agent-loop smoke — full run_benchmark.py with a fake (offline) LLM, no API key
+        run: |
+          . /home/vscode/pyenv_eda/bin/activate
+          python run_benchmark.py --benchmark simple_adder --model fake:simple_adder_pass --runs-dir /tmp/runs | tee /tmp/bench.log
+          grep -q 'Best: PASS' /tmp/bench.log   # fail the job if the agent loop didn't produce a passing design
+
+      - name: Pipeline smoke — run_pipeline.py end-to-end with a fake (offline) LLM, no API key
+        run: |
+          . /home/vscode/pyenv_eda/bin/activate
+          # 1) plan only (no execution, no provider) — catches argparse / plan-building regressions
+          python run_pipeline.py --benchmark simple_adder --model fake:simple_adder_pass \
+              --metrics transistors --pareto-dims cells,transistors --dry-run
+          # 2) real end-to-end on the fake provider: Phase 1 -> seeded Phase 2 -> combined Pareto
+          python run_pipeline.py --benchmark simple_adder --model fake:simple_adder_pass \
+              --metrics transistors --pareto-dims cells,transistors \
+              --total-runs 1 --max-concurrent 1 --max-steps 5 \
+              --runs-root /tmp/pipe --out /tmp/pipe_pareto | tee /tmp/pipe.log
+          grep -q 'Combined .*Pareto front' /tmp/pipe.log   # both phases ran and the extract step was reached

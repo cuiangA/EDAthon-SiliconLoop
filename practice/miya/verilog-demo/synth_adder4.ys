@@ -1,0 +1,8 @@
+read_verilog adder4.v
+hierarchy -check -top adder4
+proc
+opt
+techmap
+opt
+stat
+write_verilog synthesized_adder4.v

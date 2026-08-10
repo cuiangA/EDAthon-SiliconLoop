@@ -1,0 +1,8 @@
+read_verilog and_gate.v
+hierarchy -check -top and_gate
+proc
+opt
+techmap
+opt
+stat
+write_verilog synthesized.v

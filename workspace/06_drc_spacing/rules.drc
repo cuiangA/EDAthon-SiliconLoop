@@ -1,0 +1,7 @@
+source($input)
+report("simple_m1_drc", $report)
+
+m1 = input(1, 0)
+
+m1.width(0.05.um).output("M1_WIDTH", "Metal1 width must be at least 0.05um")
+m1.space(0.06.um).output("M1_SPACE", "Metal1 spacing must be at least 0.06um")

@@ -1,0 +1,5 @@
+*.out
+*.vcd
+*.log
+__pycache__/
+synthesized*.v
